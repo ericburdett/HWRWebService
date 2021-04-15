@@ -1,73 +1,55 @@
-import uuid
-import json
 import time
-import io
-import base64
 
 import flask
-import redis
-import numpy as np
-from PIL import Image
-from hwr.dataset import img_resize_with_pad
+import pymongo
+from bson.json_util import dumps
 
 import settings
-import helpers
-
-
-def preprocess(img):
-    if len(img.shape) == 2:
-        img = np.expand_dims(img, 2)
-    img = img_resize_with_pad(img, settings.IMG_SIZE)
-    img = img.numpy()
-    img.copy(order='C')
-
-    return img
 
 
 def ws_create():
-    ws = flask.Flask(__name__)
-    db = redis.StrictRedis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=settings.REDIS_DB)
-    db.delete(settings.QUEUE_NAME)
+    ws = flask.Flask(__name__, static_url_path="", static_folder="static")
+    db = pymongo.MongoClient(host=settings.MONGO_HOST, port=settings.MONGO_PORT)
 
-    @ws.route('/')
+    @ws.route('/', redirect_to='/index.html')
     def home():
-        return "Python Flask Web Server"
+        pass
+
+    @ws.route(settings.WS_INFERENCES_ENDPOINT, methods=['GET'])
+    def get_previous_inferences():
+        results = db[settings.DB_SCHEMA][settings.DB_INFERENCES].find()
+        results = list(results)
+
+        return dumps(results), 200
 
     @ws.route(settings.WS_PREDICT_ENDPOINT, methods=['POST'])
     def predict():
-        data = {settings.WS_PAYLOAD_SUCCESS: False}
+        img = flask.request.form.get(settings.WS_PAYLOAD_IMG)
 
-        if flask.request.files.get(settings.WS_PAYLOAD_IMG):
-            img = flask.request.files[settings.WS_PAYLOAD_IMG].read()
-            img = np.array(Image.open(io.BytesIO(img)))
-            img = preprocess(img)
-            img = helpers.base64_encode_img(img)
+        if img:
+            result = db[settings.DB_SCHEMA][settings.DB_QUEUE].insert_one(
+                {settings.DB_IMG: img, settings.DB_STATUS: settings.DB_STATUS_WAITING}
+            )
 
-            unique_id = str(uuid.uuid4())
+            object_id = result.inserted_id
 
-            payload = {settings.WS_PAYLOAD_ID: unique_id, settings.WS_PAYLOAD_IMG: img}
-            db.rpush(settings.QUEUE_NAME, json.dumps(payload))
-
-            # Loop until we have a prediction
             start_time = time.perf_counter()
             while time.perf_counter() - start_time < settings.TIMEOUT_TIME_S:
-                output = db.get(unique_id)
+                output = db[settings.DB_SCHEMA][settings.DB_QUEUE].find_one_and_delete(
+                    {settings.DB_ID: object_id, settings.DB_STATUS: settings.DB_STATUS_DONE}
+                )
 
-                if output is not None:
-                    output = output.decode('utf8')
-                    data[settings.WS_PAYLOAD_SUCCESS] = True
-                    data[settings.WS_PAYLOAD_PREDICTION] = output
+                if output:
+                    # Move the result to the inferences document store
+                    result = db[settings.DB_SCHEMA][settings.DB_INFERENCES].insert_one(output)
+                    if result.acknowledged:
+                        return '', 200
+                    else:
+                        return '', 500
 
-                    # Delete id from Redis
-                    db.delete(unique_id)
+            return '', 304
 
-                    # break from loop
-                    break
-
-                else:
-                    time.sleep(settings.CLIENT_SLEEP_S)
-
-        return flask.jsonify(data)
+        return '', 400
 
     return ws
 

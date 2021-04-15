@@ -1,16 +1,12 @@
 import time
-import json
 
 import tensorflow as tf
-import numpy as np
-import redis
+import pymongo
+
 from hwr import models, dataset
 from hwr.util import bp_decode
-import matplotlib.pyplot as plt
-
 
 import settings
-import helpers
 
 
 CHARS = " !\"#%&'()*+,-./0123456789:;<=>?ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_abcdefghijklmnopqrstuvwxyz{|}£¤§°²ÀÉàâçèéêëîôùûœſ€⊥𐌰𐌳𐌴𐌵𐌸𐌺𐌻𐌼𐌾𐍆𐍈"
@@ -22,48 +18,49 @@ def main():
 
     idx2char = dataset.get_idx2char(CHARS)
 
-    db = redis.StrictRedis(host=settings.REDIS_HOST, port=settings.REDIS_PORT, db=settings.REDIS_DB)
+    db = pymongo.MongoClient(host=settings.MONGO_HOST, port=settings.MONGO_PORT)
 
-    # Continually check the Redis queue to see if there are more images to perform classification
+    # Continually check the Mongo queue to see if there are more images to perform classification
     while True:
-        queue = db.lrange(settings.QUEUE_NAME, 0, settings.BATCH_SIZE - 1)
+        instance = db[settings.DB_SCHEMA][settings.DB_QUEUE].find_one_and_update(
+            {settings.DB_STATUS: settings.DB_STATUS_WAITING},
+            {'$set': {settings.DB_STATUS: settings.DB_STATUS_PROCESSING}},
+            fields={settings.DB_ID: 1, settings.DB_IMG: 1}
+        )
 
-        if not queue:
-            print('No images in the Queue...')
-            time.sleep(settings.MODEL_SLEEP_S)
-            continue
+        # If there is an instance to pull off the queue that requires inference
+        if instance is not None:
+            id = instance[settings.DB_ID]
+            img = instance[settings.DB_IMG][22:]
 
-        batch = None
-
-        ids = []
-        for q in queue:
-            q = json.loads(q.decode('utf8'))
-            img = helpers.base64_decode_img(q[settings.WS_PAYLOAD_IMG], settings.IMG_SIZE)
+            img = tf.io.decode_base64(img)
+            img = tf.image.decode_image(img, channels=1)
 
             # Convert to tensor and expand batch dimension
-            img = tf.constant(img)
-            img = tf.expand_dims(img, 2)
+            img = dataset.img_resize_with_pad(img, settings.IMG_SIZE)
             img = tf.expand_dims(img, 0)
             img = tf.image.per_image_standardization(img)
 
-            if batch is None:
-                batch = img
+            output = model(img)
+            predictions = bp_decode(output)
+
+            predictions = tf.squeeze(predictions, 0)
+            str_prediction = dataset.idxs_to_str(predictions, idx2char, merge_repeated=True).numpy().decode('utf8')
+
+            result = db[settings.DB_SCHEMA][settings.DB_QUEUE].update_one(
+                {settings.DB_ID: id},
+                {'$set': {settings.DB_STATUS: settings.DB_STATUS_DONE, settings.DB_TRANSCRIPTION: str_prediction}}
+            )
+
+            if result.acknowledged:
+                print('Performed Inference: ', str_prediction)
             else:
-                batch = tf.concat((batch, img), axis=0)
+                print('Error occurred while adding transcription to Mongo')
 
-            ids.append(q[settings.WS_PAYLOAD_ID])
-
-        output = model(batch)
-        predictions = bp_decode(output)
-        str_predictions = dataset.idxs_to_str_batch(predictions, idx2char, merge_repeated=True).numpy()
-
-        for str_prediction, id in zip(str_predictions, ids):
-            decoded_prediction = str_prediction.decode('utf8')
-            print('Prediction:', decoded_prediction)
-
-            db.set(id, decoded_prediction)
-
-        db.ltrim(settings.QUEUE_NAME, len(queue), -1)
+        # If there are no images to pull off the queue for inference
+        else:
+            print('No images in the Queue...')
+            time.sleep(settings.MODEL_SLEEP_S)
 
 
 if __name__ == '__main__':

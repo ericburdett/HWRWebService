@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Upload Images of Handwriting</title>
+    <meta charset="UTF-8" />
+
+    <!-- JavaScript Functions and StyleSheets -->
+    <link rel="stylesheet" href="style.css">
+    <script src="ajax.js"></script>
+
+    <!-- BootStrap/FontAwesome Dependencies -->
+    <script src="https://kit.fontawesome.com/2f4d19c2df.js" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+</head>
+
+<body>
+    <!-- Navbar - Fixed at the top -->
+    <nav class="navbar navbar-expand-md bg-dark navbar-dark fixed-top">
+        <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#collapsible">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+
+        <div class="collapse navbar-collapse" id="collapsible">
+            <ul class="navbar-nav">
+                <li class="nav-item">
+                    <a class="nav-link" href="index.html"><i class="fas fa-home"></i> Home</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="journal.html"><i class="fas fa-book"></i> Journal Entries</a>
+                </li>
+                <li class="nav-item active">
+                    <a class="nav-link" href="upload.html"><i class="fas fa-file-upload"></i> Upload</a>
+                </li>
+            </ul>
+        </div>
+    </nav>
+
+
+
+    <div class="margin container">
+        <div class="text-center"><h1>Upload Image</h1></div>
+        <div class="form-group">
+            <div class="input-group">
+                <span class="input-group-btn">
+                    <span class="btn btn-default btn-file btn-dark">
+                        Browse<input type="file" id="imgInp">
+                    </span>
+                </span>
+                <input type="text" class="form-control" readonly>
+                <span id="upload-button" class="btn btn-default btn-dark" onclick="predict()">Upload</span>
+            </div>
+            <img id='img-upload'/>
+        </div>
+    </div>
+
+<script>
+    $(document).ready( function() {
+    	$(document).on('change', '.btn-file :file', function() {
+		var input = $(this),
+			label = input.val().replace(/\\/g, '/').replace(/.*\//, '');
+		input.trigger('fileselect', [label]);
+		});
+
+		$('.btn-file :file').on('fileselect', function(event, label) {
+
+		    var input = $(this).parents('.input-group').find(':text'),
+		        log = label;
+
+		    if( input.length ) {
+		        input.val(log);
+		    } else {
+		        if( log ) alert(log);
+		    }
+
+		});
+		function readURL(input) {
+		    if (input.files && input.files[0]) {
+		        var reader = new FileReader();
+
+		        reader.onload = function (e) {
+		            $('#img-upload').attr('src', e.target.result);
+		        }
+
+		        reader.readAsDataURL(input.files[0]);
+		    }
+		}
+
+		$("#imgInp").change(function(){
+		    readURL(this);
+		});
+	});
+</script>
+
+
+</body>
+
+</html>

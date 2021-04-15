@@ -1,0 +1,5 @@
+name: ws_mongo_env
+channels:
+- anaconda
+dependencies:
+- mongodb
